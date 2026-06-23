@@ -1,0 +1,11 @@
+{
+  "name": "hermes-plugin-casper-tx",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "casper-js-sdk": "^5.0.12",
+    "ethers": "^6.13.0"
+  }
+}

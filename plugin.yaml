@@ -1,0 +1,39 @@
+name: casper
+version: 1.1.0
+description: >-
+  Full Casper blockchain integration — network/account/contract reads, CEP-18/47/78
+  tokens, staking, DeFi, DApp queries, alerts, and on-chain write operations.
+author: Casper Community
+provides_tools:
+  - casper_get_balance
+  - casper_account_read
+  - casper_network_query
+  - casper_gas_query
+  - casper_token_read
+  - casper_staking_read
+  - casper_dapp_read
+  - casper_deploy_status
+  - casper_alerts
+  - casper_generate_wallet
+  - casper_native_write
+  - casper_token_write
+  - casper_nft_write
+  - casper_staking_write
+  - casper_defi_write
+  - casper_dapp_write
+optional_env:
+  - name: CASPER_NODE_URL
+    description: "Casper JSON-RPC endpoint (default: testnet public node)"
+  - name: CASPER_RPC_URL
+    description: "Alias for CASPER_NODE_URL"
+  - name: CASPER_API_KEY
+    description: "Optional bearer token for authenticated RPC endpoints"
+    secret: true
+  - name: CASPER_CHAIN_NAME
+    description: "Chain name for deploys (default: casper-test)"
+  - name: CASPER_SIGNING_KEY_HEX
+    description: "Ed25519 private key hex for write operations"
+    secret: true
+  - name: CASPER_SIGNING_KEY_PEM
+    description: "Ed25519 private key PEM for write operations"
+    secret: true

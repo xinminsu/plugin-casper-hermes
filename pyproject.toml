@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-plugin-casper"
+version = "1.0.0"
+description = "Casper blockchain plugin for Hermes AI agent framework"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Casper Community" }]
+requires-python = ">=3.9"
+keywords = ["hermes", "casper", "blockchain", "cspr", "agent", "plugin"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = []
+
+[project.optional-dependencies]
+write = ["pycspr>=1.2.0"]
+all = ["pycspr>=1.2.0"]
+
+# For pip distribution, copy plugin files into site-packages/hermes_plugin_casper/
+# or install via directory copy to ~/.hermes/plugins/casper (recommended).
