@@ -28,7 +28,7 @@ Read operations use Python standard library only. Write operations require `pycs
 cp -r plugin-casper-hermes ~/.hermes/plugins/casper
 
 # Windows (PowerShell)
-Copy-Item -Recurse plugin-casper-hermes $env:USERPROFILE\.hermes\plugins\casper
+Copy-Item -Recurse plugin-casper-hermes %LOCALAPPDATA%\hermes\plugins\casper
 ```
 
 Enable the plugin:
