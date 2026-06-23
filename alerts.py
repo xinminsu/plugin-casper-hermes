@@ -9,9 +9,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from rpc import CasperRpcClient
-from reads import query_gas
-from utils import motes_to_cspr, validate_address
+try:
+    from .rpc import CasperRpcClient
+    from .reads import query_gas
+    from .utils import motes_to_cspr, validate_address
+except ImportError:
+    from rpc import CasperRpcClient
+    from reads import query_gas
+    from utils import motes_to_cspr, validate_address
 
 DEFAULT_ALERTS_PATH = Path(os.environ.get("CASPER_ALERTS_FILE", Path.home() / ".hermes" / "casper_alerts.json"))
 

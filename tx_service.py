@@ -9,7 +9,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from config import is_signing_configured, load_config
+try:
+    from .config import is_signing_configured, load_config
+except ImportError:
+    from config import is_signing_configured, load_config
 
 _SCRIPT_DIR = Path(__file__).resolve().parent / "scripts"
 _TX_RUNNER = _SCRIPT_DIR / "tx_runner.mjs"

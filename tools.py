@@ -5,24 +5,44 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from alerts import add_alert, check_alerts, list_alerts, remove_alert
-from config import load_config
-from read_helpers import list_contract_named_keys
-from reads import dapp_read, query_gas, staking_read, token_read
-from rpc import CasperRpcClient, CasperRpcError
-from transaction import CasperTransactionError, generate_wallet
-from tx_service import CasperTransactionError as TxBridgeError
-from tx_service import run_tx_operation, transfer_cspr
-from utils import (
-    format_timestamp,
-    motes_to_cspr,
-    normalize_address,
-    parse_cl_value,
-    truncate,
-    validate_address,
-    validate_contract_hash,
-    validate_public_key,
-)
+try:
+    from .alerts import add_alert, check_alerts, list_alerts, remove_alert
+    from .config import load_config
+    from .read_helpers import list_contract_named_keys
+    from .reads import dapp_read, query_gas, staking_read, token_read
+    from .rpc import CasperRpcClient, CasperRpcError
+    from .transaction import CasperTransactionError, generate_wallet
+    from .tx_service import CasperTransactionError as TxBridgeError
+    from .tx_service import run_tx_operation, transfer_cspr
+    from .utils import (
+        format_timestamp,
+        motes_to_cspr,
+        normalize_address,
+        parse_cl_value,
+        truncate,
+        validate_address,
+        validate_contract_hash,
+        validate_public_key,
+    )
+except ImportError:
+    from alerts import add_alert, check_alerts, list_alerts, remove_alert
+    from config import load_config
+    from read_helpers import list_contract_named_keys
+    from reads import dapp_read, query_gas, staking_read, token_read
+    from rpc import CasperRpcClient, CasperRpcError
+    from transaction import CasperTransactionError, generate_wallet
+    from tx_service import CasperTransactionError as TxBridgeError
+    from tx_service import run_tx_operation, transfer_cspr
+    from utils import (
+        format_timestamp,
+        motes_to_cspr,
+        normalize_address,
+        parse_cl_value,
+        truncate,
+        validate_address,
+        validate_contract_hash,
+        validate_public_key,
+    )
 
 
 def _ok(payload: dict[str, Any]) -> str:
@@ -33,8 +53,15 @@ def _err(message: str, **extra: Any) -> str:
     return json.dumps({"error": message, **extra})
 
 
-def _client() -> CasperRpcClient:
-    return CasperRpcClient(config=load_config())
+def _client(args: dict | None = None) -> CasperRpcClient:
+    network = (args or {}).get("network")
+    if network is not None:
+        network = str(network).strip() or None
+    return CasperRpcClient(config=load_config(network=network))
+
+
+def _with_meta(client: CasperRpcClient, payload: dict[str, Any]) -> dict[str, Any]:
+    return {**client.network_meta(), **payload}
 
 
 def _write_error(exc: Exception) -> str:
@@ -52,7 +79,8 @@ def casper_get_balance(args: dict, **kwargs) -> str:
     if not validate_address(address):
         return _err("Invalid address (public key, account hash, or 0x hex)")
     try:
-        result = _client().get_cspr_balance(address)
+        client = _client(args)
+        result = client.get_cspr_balance(address)
         result["note"] = "CEP-18 token balances use casper_token_read with query_type balance_of"
         return _ok(result)
     except CasperRpcError as exc:
@@ -61,7 +89,7 @@ def casper_get_balance(args: dict, **kwargs) -> str:
 
 def casper_account_read(args: dict, **kwargs) -> str:
     query_type = (args.get("query_type") or "").strip()
-    client = _client()
+    client = _client(args)
     try:
         if query_type == "account_info":
             address = normalize_address((args.get("address") or args.get("public_key") or "").strip())
@@ -186,19 +214,22 @@ def casper_account_read(args: dict, **kwargs) -> str:
 
 def casper_network_query(args: dict, **kwargs) -> str:
     query_type = (args.get("query_type") or "").strip()
-    client = _client()
+    client = _client(args)
     try:
         if query_type == "node_status":
             status = client.get_node_status()
             last = status.get("last_added_block_info", {})
             return _ok(
-                {
-                    "chainspec_name": status.get("chainspec_name"),
-                    "api_version": status.get("api_version"),
-                    "peer_count": len(status.get("peers", [])),
-                    "last_block_height": last.get("height"),
-                    "last_block_timestamp": format_timestamp(last.get("timestamp")),
-                }
+                _with_meta(
+                    client,
+                    {
+                        "chainspec_name": status.get("chainspec_name"),
+                        "api_version": status.get("api_version"),
+                        "peer_count": len(status.get("peers", [])),
+                        "last_block_height": last.get("height"),
+                        "last_block_timestamp": format_timestamp(last.get("timestamp")),
+                    },
+                )
             )
         if query_type == "peers":
             result = client.get_peers()
@@ -280,7 +311,7 @@ def casper_network_query(args: dict, **kwargs) -> str:
 
 
 def casper_gas_query(args: dict, **kwargs) -> str:
-    client = _client()
+    client = _client(args)
     query_type = args.get("query_type") or "gas_info"
     try:
         if query_type == "gas_info":
@@ -300,15 +331,16 @@ def casper_token_read(args: dict, **kwargs) -> str:
     if not validate_contract_hash(contract_hash):
         return _err("contract_hash required")
     try:
-        params = {k: v for k, v in args.items() if k not in ("query_type", "contract_hash") and v is not None}
-        return _ok(token_read(_client(), query_type, contract_hash, **params))
+        client = _client(args)
+        params = {k: v for k, v in args.items() if k not in ("query_type", "contract_hash", "network") and v is not None}
+        return _ok(_with_meta(client, token_read(client, query_type, contract_hash, **params)))
     except (CasperRpcError, ValueError) as exc:
         return _err(str(exc))
 
 
 def casper_staking_read(args: dict, **kwargs) -> str:
     query_type = (args.get("query_type") or "").strip()
-    client = _client()
+    client = _client(args)
     try:
         if query_type in ("validator_detail", "delegation"):
             return _ok(staking_read(client, query_type, public_key=args.get("public_key")))
@@ -346,40 +378,110 @@ def casper_dapp_read(args: dict, **kwargs) -> str:
     if not validate_contract_hash(contract_hash):
         return _err("contract_hash required")
     try:
-        params = {k: v for k, v in args.items() if k not in ("query_type", "contract_hash") and v is not None}
-        return _ok(dapp_read(_client(), query_type, contract_hash, **params))
+        client = _client(args)
+        params = {k: v for k, v in args.items() if k not in ("query_type", "contract_hash", "network") and v is not None}
+        return _ok(_with_meta(client, dapp_read(client, query_type, contract_hash, **params)))
     except (CasperRpcError, ValueError) as exc:
         return _err(str(exc))
+
+
+def _deploy_execution_summary(result: dict[str, Any]) -> tuple[str, Any, str | None]:
+    exec_results = result.get("execution_results") or []
+    exec_result = exec_results[0].get("result") if exec_results else {}
+    status = "pending"
+    gas = None
+    error_message = None
+    if exec_result.get("Success"):
+        status = "success"
+        gas = exec_result["Success"].get("cost")
+    elif exec_result.get("Failure"):
+        status = "failed"
+        error_message = exec_result["Failure"].get("error_message")
+    return status, gas, error_message
+
+
+def _deploy_payment_motes(deploy: dict[str, Any]) -> str | None:
+    payment = deploy.get("payment") or {}
+    module_bytes = payment.get("ModuleBytes") or payment.get("module_bytes") or {}
+    args_list = module_bytes.get("args") or []
+    for arg in args_list:
+        if not isinstance(arg, dict):
+            continue
+        name = (arg.get("name") or "").lower()
+        if name == "amount":
+            parsed = arg.get("parsed") or arg.get("value") or {}
+            if isinstance(parsed, dict):
+                return str(parsed.get("value") or parsed.get("parsed") or "")
+            return str(parsed)
+    standard = payment.get("StandardPayment") or payment.get("standard_payment")
+    if isinstance(standard, dict):
+        return str(standard.get("amount") or standard.get("limit") or "")
+    return None
 
 
 def casper_deploy_status(args: dict, **kwargs) -> str:
     deploy_hash = (args.get("deploy_hash") or "").strip().lower().replace("deploy-hash-", "")
     if not deploy_hash:
         return _err("deploy_hash required")
+    query_type = (args.get("query_type") or "status").strip()
+    finalized = args.get("finalized_approvals_only", True)
+    if isinstance(finalized, str):
+        finalized = finalized.strip().lower() not in {"false", "0", "no"}
     try:
-        result = _client().get_deploy(deploy_hash)
-        deploy = result.get("deploy", {})
-        header = deploy.get("header", {})
-        exec_results = result.get("execution_results", [])
-        exec_result = exec_results[0].get("result") if exec_results else {}
-        status = "pending"
-        gas = None
-        error_message = None
-        if exec_result.get("Success"):
-            status = "success"
-            gas = exec_result["Success"].get("cost")
-        elif exec_result.get("Failure"):
-            status = "failed"
-            error_message = exec_result["Failure"].get("error_message")
-        return _ok(
-            {
+        client = _client(args)
+        result = client.get_deploy(deploy_hash, finalized_approvals_only=bool(finalized))
+        deploy = result.get("deploy") or {}
+        header = deploy.get("header") or {}
+
+        if query_type == "raw":
+            return _ok(_with_meta(client, {"deploy_hash": deploy_hash, "rpc_result": result}))
+
+        if query_type == "deploy":
+            return _ok(
+                _with_meta(
+                    client,
+                    {
+                        "deploy_hash": deploy_hash,
+                        "deploy": deploy,
+                        "execution_results": result.get("execution_results", []),
+                    },
+                )
+            )
+
+        status, gas, error_message = _deploy_execution_summary(result)
+        payment_motes = _deploy_payment_motes(deploy)
+
+        if query_type == "read_fee":
+            fee_payload: dict[str, Any] = {
                 "deploy_hash": deploy_hash,
-                "account": header.get("account"),
-                "timestamp": format_timestamp(header.get("timestamp")),
                 "status": status,
+                "payment_motes": payment_motes,
+                "payment_cspr": motes_to_cspr(payment_motes) if payment_motes else None,
                 "gas_consumed": gas,
-                "error_message": error_message,
+                "gas_consumed_cspr": motes_to_cspr(str(gas)) if gas is not None else None,
             }
+            if status == "pending" and payment_motes:
+                try:
+                    fee_payload["estimate"] = client.estimate_transaction_cost(payment_motes)
+                except CasperRpcError:
+                    pass
+            return _ok(_with_meta(client, fee_payload))
+
+        return _ok(
+            _with_meta(
+                client,
+                {
+                    "deploy_hash": deploy_hash,
+                    "account": header.get("account"),
+                    "timestamp": format_timestamp(header.get("timestamp")),
+                    "status": status,
+                    "gas_consumed": gas,
+                    "gas_consumed_cspr": motes_to_cspr(str(gas)) if gas is not None else None,
+                    "payment_motes": payment_motes,
+                    "error_message": error_message,
+                    "explorer_url": f"{client.config.explorer_url}/deploy/{deploy_hash}",
+                },
+            )
         )
     except CasperRpcError as exc:
         return _err(str(exc))
@@ -405,7 +507,7 @@ def casper_alerts(args: dict, **kwargs) -> str:
                 return _err("alert_id required")
             return _ok(remove_alert(alert_id))
         if action == "check":
-            return _ok({"triggered": check_alerts(_client())})
+            return _ok({"triggered": check_alerts(_client(args))})
         return _err(f"Unknown action: {action}")
     except ValueError as exc:
         return _err(str(exc))

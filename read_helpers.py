@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from rpc import CasperRpcClient
-from utils import parse_cl_value, validate_public_key
+try:
+    from .rpc import CasperRpcClient
+    from .utils import parse_cl_value, validate_public_key
+except ImportError:
+    from rpc import CasperRpcClient
+    from utils import parse_cl_value, validate_public_key
 
 
 def get_named_key_uref(client: CasperRpcClient, contract_hash: str, names: list[str]) -> str | None:

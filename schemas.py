@@ -1,17 +1,30 @@
 """Tool schemas for the Casper Hermes plugin."""
 
+NETWORK_PARAM = {
+    "network": {
+        "type": "string",
+        "enum": ["testnet", "mainnet", "casper-test", "casper"],
+        "description": (
+            "Casper network to query. testnet/casper-test = public testnet; "
+            "mainnet/casper = mainnet. Defaults to CASPER_CHAIN_NAME env or testnet."
+        ),
+    }
+}
+
 # --- Read tools ---
 
 CASPER_GET_BALANCE = {
     "name": "casper_get_balance",
     "description": (
         "Get CSPR balance for a Casper wallet. Supports 68-char public key, "
-        "64-char account hash, account-hash- prefix, or 0x-prefixed hex (Ethereum-style)."
+        "64-char account hash, account-hash- prefix, or 0x-prefixed hex (Ethereum-style). "
+        "Always specify network (testnet/mainnet) when the chain is ambiguous."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "address": {"type": "string", "description": "Casper public key, account hash, or 0x hex"},
+            **NETWORK_PARAM,
         },
         "required": ["address"],
     },
@@ -44,6 +57,7 @@ CASPER_ACCOUNT_READ = {
             "uref": {"type": "string"},
             "key": {"type": "string"},
             "path": {"type": "array", "items": {"type": "string"}},
+            **NETWORK_PARAM,
         },
         "required": ["query_type"],
     },
@@ -51,7 +65,11 @@ CASPER_ACCOUNT_READ = {
 
 CASPER_NETWORK_QUERY = {
     "name": "casper_network_query",
-    "description": "Query Casper network: node_status, peers, latest_block, block_by_height, block_by_hash, era_summary, validators, transfers, state_root_hash, chainspec.",
+    "description": (
+        "Query Casper network: node_status, peers, latest_block, block_by_height, block_by_hash, "
+        "era_summary, validators, transfers, state_root_hash, chainspec. "
+        "Specify network=testnet or mainnet when querying a particular chain."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
@@ -64,6 +82,7 @@ CASPER_NETWORK_QUERY = {
             },
             "block_height": {"type": "integer"},
             "block_hash": {"type": "string"},
+            **NETWORK_PARAM,
         },
         "required": ["query_type"],
     },
@@ -156,10 +175,27 @@ CASPER_DAPP_READ = {
 
 CASPER_DEPLOY_STATUS = {
     "name": "casper_deploy_status",
-    "description": "Look up Casper deploy/transaction status by hash.",
+    "description": (
+        "Look up Casper deploy/transaction by hash. query_type: status (summary), deploy (parsed), "
+        "raw (full RPC payload), read_fee (gas/fee from execution or payment). "
+        "Specify network=testnet or mainnet when the deploy chain is unknown."
+    ),
     "parameters": {
         "type": "object",
-        "properties": {"deploy_hash": {"type": "string"}},
+        "properties": {
+            "deploy_hash": {"type": "string"},
+            "query_type": {
+                "type": "string",
+                "enum": ["status", "deploy", "raw", "read_fee"],
+                "default": "status",
+            },
+            "finalized_approvals_only": {
+                "type": "boolean",
+                "description": "Use finalized approvals only (faster, default true)",
+                "default": True,
+            },
+            **NETWORK_PARAM,
+        },
         "required": ["deploy_hash"],
     },
 }

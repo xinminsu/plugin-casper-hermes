@@ -30,7 +30,11 @@ optional_env:
     description: "Optional bearer token for authenticated RPC endpoints"
     secret: true
   - name: CASPER_CHAIN_NAME
-    description: "Chain name for deploys (default: casper-test)"
+    description: "Chain name for deploys (default: casper-test). Use casper for mainnet."
+  - name: CASPER_RPC_TIMEOUT
+    description: "JSON-RPC timeout in seconds (default: 45)"
+  - name: CASPER_RPC_RETRIES
+    description: "Retry count for transient RPC timeouts (default: 2)"
   - name: CASPER_SIGNING_KEY_HEX
     description: "Ed25519 private key hex for write operations"
     secret: true

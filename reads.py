@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from read_helpers import account_dict_key, get_named_key_uref, list_contract_named_keys
-from rpc import CasperRpcClient
-from utils import motes_to_cspr, parse_cl_value, validate_public_key
+try:
+    from .read_helpers import account_dict_key, get_named_key_uref, list_contract_named_keys
+    from .rpc import CasperRpcClient
+    from .utils import motes_to_cspr, parse_cl_value, validate_public_key
+except ImportError:
+    from read_helpers import account_dict_key, get_named_key_uref, list_contract_named_keys
+    from rpc import CasperRpcClient
+    from utils import motes_to_cspr, parse_cl_value, validate_public_key
 
 
 # ---------------------------------------------------------------------------

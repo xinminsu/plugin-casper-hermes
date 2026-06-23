@@ -3,19 +3,47 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
 
-from config import CasperConfig, load_config
-from utils import (
-    motes_to_cspr,
-    normalize_contract_hash,
-    validate_account_hash,
-    validate_public_key,
-)
+try:
+    from .config import CasperConfig, load_config
+    from .utils import (
+        format_timestamp,
+        motes_to_cspr,
+        normalize_address,
+        normalize_contract_hash,
+        parse_cl_value,
+        truncate,
+        validate_address,
+        validate_contract_hash,
+        validate_public_key,
+    )
+except ImportError:
+    from config import CasperConfig, load_config
+    from utils import (
+        format_timestamp,
+        motes_to_cspr,
+        normalize_address,
+        normalize_contract_hash,
+        parse_cl_value,
+        truncate,
+        validate_address,
+        validate_contract_hash,
+        validate_public_key,
+    )
 
-DEFAULT_TIMEOUT = 20
+DEFAULT_TIMEOUT = 45
+
+
+def _resolve_address_input(address: str) -> tuple[str, str]:
+    try:
+        from .utils import resolve_address_input
+    except ImportError:
+        from utils import resolve_address_input
+    return resolve_address_input(address)
 
 
 class CasperRpcError(Exception):
@@ -28,6 +56,15 @@ class CasperRpcClient:
         self.rpc_url = self.config.node_url
         if not self.rpc_url.endswith("/rpc"):
             self.rpc_url = f"{self.rpc_url.rstrip('/')}/rpc"
+        self._state_root_cache: str | None = None
+
+    def network_meta(self) -> dict[str, str]:
+        return {
+            "network": self.config.network_label,
+            "chain_name": self.config.chain_name,
+            "rpc_url": self.rpc_url,
+            "explorer_url": self.config.explorer_url,
+        }
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -35,7 +72,7 @@ class CasperRpcClient:
             headers["Authorization"] = self.config.api_key
         return headers
 
-    def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    def _call_once(self, method: str, params: dict[str, Any] | None, timeout: int) -> Any:
         payload = json.dumps(
             {"jsonrpc": "2.0", "method": method, "params": params or {}, "id": 1}
         ).encode("utf-8")
@@ -46,20 +83,55 @@ class CasperRpcClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise CasperRpcError(f"HTTP {exc.code}: {detail}") from exc
+            raise CasperRpcError(
+                f"HTTP {exc.code} from {self.rpc_url}: {detail}"
+            ) from exc
         except urllib.error.URLError as exc:
-            raise CasperRpcError(f"Connection failed to {self.rpc_url}: {exc.reason}") from exc
+            raise CasperRpcError(
+                f"Connection failed to {self.rpc_url} ({self.config.chain_name}): {exc.reason}"
+            ) from exc
         except TimeoutError as exc:
-            raise CasperRpcError(f"Request timeout after {DEFAULT_TIMEOUT}s") from exc
+            raise CasperRpcError(
+                f"RPC timeout after {timeout}s calling {method} on {self.rpc_url} "
+                f"(chain={self.config.chain_name}). Try network=testnet|mainnet or increase CASPER_RPC_TIMEOUT."
+            ) from exc
 
         if "error" in body:
             err = body["error"]
-            raise CasperRpcError(f"RPC Error: {err.get('message', err)} (code: {err.get('code')})")
+            raise CasperRpcError(
+                f"RPC Error on {method}: {err.get('message', err)} (code: {err.get('code')}) "
+                f"[chain={self.config.chain_name}, rpc={self.rpc_url}]"
+            )
         return body.get("result")
+
+    def call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: int | None = None,
+        retries: int | None = None,
+    ) -> Any:
+        timeout = timeout or self.config.rpc_timeout
+        retries = self.config.rpc_retries if retries is None else retries
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                return self._call_once(method, params, timeout)
+            except CasperRpcError as exc:
+                last_exc = exc
+                msg = str(exc).lower()
+                retryable = "timeout" in msg or "connection failed" in msg
+                if attempt >= retries or not retryable:
+                    raise
+                time.sleep(min(2 ** attempt, 4))
+        if last_exc:
+            raise last_exc
+        raise CasperRpcError(f"RPC call failed: {method}")
 
     # --- Info API ---
 
@@ -69,8 +141,11 @@ class CasperRpcClient:
     def get_peers(self) -> dict[str, Any]:
         return self.call("info_get_peers")
 
-    def get_deploy(self, deploy_hash: str) -> dict[str, Any]:
-        return self.call("info_get_deploy", {"deploy_hash": deploy_hash})
+    def get_deploy(self, deploy_hash: str, *, finalized_approvals_only: bool = True) -> dict[str, Any]:
+        params: dict[str, Any] = {"deploy_hash": deploy_hash}
+        if finalized_approvals_only:
+            params["finalized_approvals_only"] = True
+        return self.call("info_get_deploy", params)
 
     def get_chainspec(self) -> dict[str, Any]:
         return self.call("info_get_chainspec")
@@ -99,12 +174,17 @@ class CasperRpcClient:
             params["block_identifier"] = {"Hash": block_hash}
         return self.call("chain_get_block_transfers", params)
 
-    def get_state_root_hash(self, height: int | None = None) -> str:
+    def get_state_root_hash(self, height: int | None = None, *, use_cache: bool = True) -> str:
+        if use_cache and height is None and self._state_root_cache:
+            return self._state_root_cache
         params: dict[str, Any] = {}
         if height is not None:
             params["block_identifier"] = {"Height": height}
         result = self.call("chain_get_state_root_hash", params)
-        return result["state_root_hash"]
+        state_root = result["state_root_hash"]
+        if height is None:
+            self._state_root_cache = state_root
+        return state_root
 
     def get_era_summary(self, block_hash: str | None = None) -> dict[str, Any]:
         params: dict[str, Any] = {}
@@ -225,28 +305,29 @@ class CasperRpcClient:
         )
 
     def resolve_account_info(self, address: str) -> dict[str, Any]:
-        from utils import resolve_address_input
-
-        kind, clean = resolve_address_input(address)
+        kind, clean = _resolve_address_input(address)
         if kind == "public_key":
             return self.get_account_info(clean)
         return self.get_account_info_by_hash(clean)
 
     def get_cspr_balance(self, address: str) -> dict[str, str]:
+        state_root = self.get_state_root_hash()
         account_info = self.resolve_account_info(address)
         account = account_info.get("account")
         if not account:
             raise CasperRpcError(
-                f"Account not found on Casper network (RPC: {self.rpc_url}). "
-                "Verify at https://testnet.cspr.live/"
+                f"Account not found on {self.config.network_label} ({self.config.chain_name}, "
+                f"RPC: {self.rpc_url}). Verify at {self.config.explorer_url}/"
             )
         main_purse = account["main_purse"]
-        balance_motes = self.get_balance(main_purse)
+        balance_motes = self.get_balance(main_purse, state_root_hash=state_root)
         return {
+            **self.network_meta(),
             "address": address,
             "main_purse": main_purse,
             "balance_motes": balance_motes,
             "balance_cspr": motes_to_cspr(balance_motes),
+            "state_root_hash": state_root,
         }
 
     def get_account_details(self, address: str) -> dict[str, Any]:
