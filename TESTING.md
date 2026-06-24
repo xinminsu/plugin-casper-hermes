@@ -49,7 +49,7 @@ This document describes how to verify the **plugin-casper-hermes** plugin end-to
 cp -r plugin-casper-hermes ~/.hermes/plugins/casper
 
 # Windows (PowerShell)
-Copy-Item -Recurse plugin-casper-hermes %LOCALAPPDATA%\hermes\plugins\casper
+Copy-Item -Recurse plugin-casper-hermes  "$env:LOCALAPPDATA\hermes\plugins\casper"
 ```
 
 Enable in Hermes:

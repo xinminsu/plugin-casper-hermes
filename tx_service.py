@@ -54,6 +54,9 @@ def run_tx_operation(operation: str, params: dict[str, Any] | None = None) -> di
         env.setdefault("CASPER_SIGNING_KEY_HEX", cfg.signing_key_hex)
     if cfg.signing_key_pem:
         env.setdefault("CASPER_SIGNING_KEY_PEM", cfg.signing_key_pem)
+    key_algorithm = os.environ.get("CASPER_KEY_ALGORITHM")
+    if key_algorithm:
+        env.setdefault("CASPER_KEY_ALGORITHM", key_algorithm)
 
     proc = subprocess.run(
         ["node", str(_TX_RUNNER), operation, json.dumps(params or {})],
@@ -76,8 +79,16 @@ def run_tx_operation(operation: str, params: dict[str, Any] | None = None) -> di
     return result
 
 
-def transfer_cspr(to_public_key: str, amount_cspr: str | float) -> dict[str, Any]:
-    return run_tx_operation(
-        "transfer",
-        {"to_public_key": to_public_key, "amount_cspr": str(amount_cspr)},
-    )
+def transfer_cspr(
+    to_public_key: str,
+    amount_cspr: str | float,
+    transfer_id: int | None = None,
+) -> dict[str, Any]:
+    """Transfer native CSPR using Casper 2.0 native transfer transactions."""
+    params: dict[str, Any] = {
+        "to_public_key": to_public_key,
+        "amount_cspr": str(amount_cspr),
+    }
+    if transfer_id is not None:
+        params["transfer_id"] = transfer_id
+    return run_tx_operation("transfer", params)

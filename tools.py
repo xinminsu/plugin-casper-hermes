@@ -542,7 +542,12 @@ def casper_native_write(args: dict, **kwargs) -> str:
         return _err(f"Unknown operation: {op}")
     try:
         if op == "transfer":
-            return _ok(transfer_cspr(args["to_public_key"], args["amount_cspr"]))
+            params = _pick(args, "to_public_key", "amount_cspr", "transfer_id")
+            return _ok(transfer_cspr(
+                params["to_public_key"],
+                params["amount_cspr"],
+                params.get("transfer_id"),
+            ))
         params = dict(args)
         params.pop("operation", None)
         return _ok(run_tx_operation(op_map[op], params))

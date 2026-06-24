@@ -228,8 +228,8 @@ CASPER_GENERATE_WALLET = {
 CASPER_NATIVE_WRITE = {
     "name": "casper_native_write",
     "description": (
-        "Native CSPR write ops (requires signing key + Node.js): transfer, create_purse, "
-        "add_associated_key, remove_associated_key, set_action_threshold, put_named_key."
+        "Native CSPR write ops (requires signing key + Node.js): transfer (min 2.5 CSPR), "
+        "create_purse, add_associated_key, remove_associated_key, set_action_threshold, put_named_key."
     ),
     "parameters": {
         "type": "object",
@@ -238,8 +238,18 @@ CASPER_NATIVE_WRITE = {
                 "type": "string",
                 "enum": ["transfer", "create_purse", "add_associated_key", "remove_associated_key", "set_action_threshold", "put_named_key"],
             },
-            "to_public_key": {"type": "string"},
-            "amount_cspr": {"type": "string"},
+            "to_public_key": {
+                "type": "string",
+                "description": "Recipient public key (66-char hex starting with 01/02/03).",
+            },
+            "amount_cspr": {
+                "type": "string",
+                "description": "Amount in CSPR (minimum 2.5 CSPR per Casper 2.0 rules).",
+            },
+            "transfer_id": {
+                "type": "integer",
+                "description": "Optional native transfer ID (defaults to current timestamp).",
+            },
             "public_key": {"type": "string"},
             "weight": {"type": "integer"},
             "action_type": {"type": "string", "enum": ["deployment", "key_management"]},

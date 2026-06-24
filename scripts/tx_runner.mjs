@@ -8,7 +8,6 @@ import {
   Deploy,
   DeployHeader,
   ExecutableDeployItem,
-  TransferDeployItem,
   StoredContractByHash,
   Args,
   CLValue,
@@ -18,6 +17,9 @@ import {
   Timestamp,
   Duration,
   Hash,
+  NativeTransferBuilder,
+  HttpHandler,
+  RpcClient,
 } from 'casper-js-sdk';
 import { ethers } from 'ethers';
 import axios from 'axios';
@@ -32,8 +34,13 @@ const apiKey = process.env.CASPER_API_KEY;
 const chainName = process.env.CASPER_CHAIN_NAME || 'casper-test';
 const signingHex = process.env.CASPER_SIGNING_KEY_HEX || process.env.CASPER_PRIVATE_KEY;
 const signingPem = process.env.CASPER_SIGNING_KEY_PEM;
+const keyAlgorithmEnv = (process.env.CASPER_KEY_ALGORITHM || '').trim().toLowerCase();
 const DEFAULT_TTL = 1800000;
 const DEFAULT_GAS = '2500000000';
+const STANDARD_TRANSFER_PAYMENT = 2_500_000_000;
+const MIN_TRANSFER_MOTES = 2_500_000_000n;
+
+let cachedRpcClient = null;
 
 function fail(msg) {
   console.log(JSON.stringify({ error: msg }));
@@ -45,11 +52,65 @@ function ok(data) {
   process.exit(0);
 }
 
+function normalizeSigningKeyPem(pem) {
+  if (!pem) return undefined;
+  let normalized = pem.trim();
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1);
+  }
+  if (normalized.includes('\\n')) {
+    normalized = normalized.replace(/\\n/g, '\n');
+  }
+  return normalized.trim() || undefined;
+}
+
+function resolveKeyAlgorithmFromPem(pem) {
+  if (keyAlgorithmEnv === 'secp256k1') return KeyAlgorithm.SECP256K1;
+  if (keyAlgorithmEnv === 'ed25519') return KeyAlgorithm.ED25519;
+  if (pem.includes('BEGIN EC PRIVATE KEY')) return KeyAlgorithm.SECP256K1;
+  return KeyAlgorithm.ED25519;
+}
+
+function resolveKeyAlgorithmFromHex() {
+  if (keyAlgorithmEnv === 'secp256k1') return KeyAlgorithm.SECP256K1;
+  return KeyAlgorithm.ED25519;
+}
+
 function getSigningKey() {
-  const algo = KeyAlgorithm.ED25519;
-  if (signingPem) return PrivateKey.fromPem(signingPem, algo);
-  if (signingHex) return PrivateKey.fromHex(signingHex.replace(/^0x/, ''), algo);
+  const pem = normalizeSigningKeyPem(signingPem);
+  if (pem) return PrivateKey.fromPem(pem, resolveKeyAlgorithmFromPem(pem));
+  if (signingHex) {
+    return PrivateKey.fromHex(signingHex.replace(/^0x/, ''), resolveKeyAlgorithmFromHex());
+  }
   fail('No signing key. Set CASPER_SIGNING_KEY_HEX or CASPER_SIGNING_KEY_PEM');
+}
+
+function rpcEndpoint() {
+  return rpcUrl.endsWith('/rpc') ? rpcUrl : `${rpcUrl}/rpc`;
+}
+
+function getRpcClient() {
+  if (!cachedRpcClient) {
+    const handler = new HttpHandler(rpcEndpoint());
+    if (apiKey) handler.setCustomHeaders({ Authorization: apiKey });
+    cachedRpcClient = new RpcClient(handler);
+  }
+  return cachedRpcClient;
+}
+
+function formatRpcError(error) {
+  const code = error?.code ?? error?.sourceErr?.code;
+  const message = error?.message ?? error?.sourceErr?.message ?? String(error);
+  const data = error?.sourceErr?.data ?? error?.data;
+  if (data) return `RPC Error: ${message} (code: ${code}) — ${data}`;
+  return `RPC Error: ${message}${code !== undefined ? ` (code: ${code})` : ''}`;
+}
+
+function explorerBaseUrl() {
+  return chainName === 'casper' ? 'https://cspr.live' : 'https://testnet.cspr.live';
 }
 
 async function submitDeploy(deploy) {
@@ -86,8 +147,41 @@ async function callContract(contractHash, entryPoint, argsMap = {}, gasPayment =
   return signAndSubmit(session, gasPayment);
 }
 
+const TAGGED_PUBLIC_KEY_PATTERN = /0[1-3][0-9a-fA-F]{64,68}/;
+
+function parseCasperPublicKey(publicKey) {
+  const trimmed = String(publicKey).trim();
+
+  if (trimmed.startsWith('account-hash-')) {
+    fail(
+      'Account hash is not supported for transfers. Provide a public key starting with 01, 02, or 03.'
+    );
+  }
+
+  if (/^0[1-3][0-9a-fA-F]{64}$/.test(trimmed)) {
+    return PublicKey.fromHex(trimmed);
+  }
+
+  if (/^0[1-3][0-9a-fA-F]{66}$/.test(trimmed)) {
+    return PublicKey.fromHex(trimmed);
+  }
+
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    return PublicKey.fromHex(`02${trimmed}`);
+  }
+
+  const match = trimmed.match(TAGGED_PUBLIC_KEY_PATTERN);
+  if (match) {
+    return PublicKey.fromHex(match[0]);
+  }
+
+  fail(
+    `Invalid public key format: "${trimmed}". Expected a 66-character hex string starting with 01, 02, or 03.`
+  );
+}
+
 function pubKey(hex) {
-  return PublicKey.fromHex(hex.replace(/^0x/, ''), KeyAlgorithm.ED25519);
+  return parseCasperPublicKey(hex);
 }
 
 function amountUnits(amount, decimals = 9) {
@@ -96,12 +190,47 @@ function amountUnits(amount, decimals = 9) {
 
 const OPS = {
   async transfer(p) {
-    const target = pubKey(p.to_public_key);
+    if (p.source_purse) {
+      fail('Transfer from a custom source purse is not supported with Casper 2.0 transactions yet.');
+    }
+
+    const target = parseCasperPublicKey(p.to_public_key);
     const amountMotes = amountUnits(p.amount_cspr, 9);
-    const transferItem = TransferDeployItem.newTransfer(amountMotes, target, null, p.transfer_id ?? Math.floor(Math.random() * 1e6));
-    const session = new ExecutableDeployItem();
-    session.transfer = transferItem;
-    return signAndSubmit(session, p.gas_payment || DEFAULT_GAS);
+
+    if (BigInt(amountMotes) < MIN_TRANSFER_MOTES) {
+      fail(`Transfer amount must be at least 2.5 CSPR. Received ${p.amount_cspr} CSPR.`);
+    }
+
+    const signingKey = getSigningKey();
+    const id = p.transfer_id ?? Date.now();
+
+    const transaction = new NativeTransferBuilder()
+      .from(signingKey.publicKey)
+      .target(target)
+      .amount(amountMotes)
+      .id(id)
+      .chainName(chainName)
+      .payment(p.gas_payment ?? STANDARD_TRANSFER_PAYMENT)
+      .ttl(DEFAULT_TTL)
+      .build();
+
+    transaction.sign(signingKey);
+
+    try {
+      const putResult = await getRpcClient().putTransaction(transaction);
+      const transactionHash =
+        putResult.transactionHash?.toString?.() ?? String(putResult.transactionHash);
+      const explorer = explorerBaseUrl();
+      return {
+        deploy_hash: transactionHash,
+        transaction_hash: transactionHash,
+        chain_name: chainName,
+        explorer_url: `${explorer}/deploy/${transactionHash}`,
+        result: putResult,
+      };
+    } catch (error) {
+      fail(formatRpcError(error));
+    }
   },
 
   async call_contract(p) {
